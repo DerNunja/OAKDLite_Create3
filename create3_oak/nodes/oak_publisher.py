@@ -14,14 +14,14 @@ def camera_is_available(logger):
     try:
         devices = dai.Device.getAllAvailableDevices()
     except Exception as exc:
-        logger.error(f"Kamera-Check fehlgeschlagen: {exc}")
+        logger.error(f"Camera check failed: {exc}")
         return False
 
     if not devices:
-        logger.error("Keine OAK-D/DepthAI-Kamera erreichbar. USB pruefen oder Kamera kurz ab-/anstecken.")
+        logger.error("No OAK-D/DepthAI camera reachable. Check USB or unplug/replug the camera.")
         return False
 
-    logger.info("OAK-D/DepthAI-Kamera erreichbar: " + ", ".join(str(d) for d in devices))
+    logger.info("OAK-D/DepthAI camera reachable: " + ", ".join(str(d) for d in devices))
     return True
 
 
@@ -52,7 +52,7 @@ def main():
 
             qDet = spatial.out.createOutputQueue()
             p.start()
-            node.get_logger().info("Pipeline laeuft, publiziere /oak/nn/spatial_detections")
+            node.get_logger().info("Pipeline running, publishing /oak/nn/spatial_detections")
 
             while p.isRunning() and rclpy.ok():
                 inDet = qDet.get()
@@ -65,7 +65,7 @@ def main():
                     hyp = ObjectHypothesisWithPose()
                     hyp.hypothesis.class_id = str(d.labelName)
                     hyp.hypothesis.score = float(d.confidence)
-                    # DepthAI liefert mm -> ROS-Konvention in Metern
+                    # DepthAI provides millimeters; ROS convention here is meters.
                     hyp.pose.pose.position.x = d.spatialCoordinates.x / 1000.0
                     hyp.pose.pose.position.y = d.spatialCoordinates.y / 1000.0
                     hyp.pose.pose.position.z = d.spatialCoordinates.z / 1000.0
@@ -73,7 +73,7 @@ def main():
                     msg.detections.append(det)
                 pub.publish(msg)
                 if msg.detections:
-                    node.get_logger().info(f"{len(msg.detections)} Objekt(e) publiziert")
+                    node.get_logger().info(f"published {len(msg.detections)} object(s)")
     except KeyboardInterrupt:
         pass
     finally:

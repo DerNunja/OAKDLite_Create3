@@ -13,18 +13,18 @@ class DriveToObject(Node):
         super().__init__('drive_to_object')
 
         # --- Parameter mit sicheren Defaults ---
-        self.declare_parameter('dry_run', True)            # True = faehrt NICHT, nur Log
-        self.declare_parameter('target_class', '')         # '' = beliebiges Objekt, sonst z.B. 'person'
+        self.declare_parameter('dry_run', True)            # True = do NOT drive, only log commands
+        self.declare_parameter('target_class', '')         # '' = any object, otherwise e.g. 'person'
         self.declare_parameter('min_confidence', 0.4)
-        self.declare_parameter('stop_distance', 0.5)       # m: Zielabstand vor dem Objekt
+        self.declare_parameter('stop_distance', 0.5)       # m: target distance in front of the object
         self.declare_parameter('distance_tolerance', 0.05) # m
         self.declare_parameter('max_linear', 0.15)         # m/s
         self.declare_parameter('max_angular', 0.6)         # rad/s
-        self.declare_parameter('k_lin', 0.4)               # P-Verstaerkung vorwaerts
-        self.declare_parameter('k_ang', 1.2)               # P-Verstaerkung Drehung
-        self.declare_parameter('align_threshold', 0.35)    # rad (~20 Grad): erst ausrichten, dann fahren
-        self.declare_parameter('angular_deadband', 0.05)   # rad: darunter keine Drehung
-        self.declare_parameter('detection_timeout', 0.5)   # s: ohne Detektion -> Stopp
+        self.declare_parameter('k_lin', 0.4)               # P gain for forward speed
+        self.declare_parameter('k_ang', 1.2)               # P gain for rotation
+        self.declare_parameter('align_threshold', 0.35)    # rad (~20 deg): align before driving
+        self.declare_parameter('angular_deadband', 0.05)   # rad: no rotation below this threshold
+        self.declare_parameter('detection_timeout', 0.5)   # s: stop when no detection is received
         self.declare_parameter('control_rate', 15.0)       # Hz
 
         gp = self.get_parameter
@@ -52,9 +52,9 @@ class DriveToObject(Node):
         self.pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.timer = self.create_timer(1.0 / rate, self.control_loop)
 
-        mode = 'DRY-RUN (faehrt NICHT)' if self.dry_run else 'AKTIV (faehrt!)'
-        self.get_logger().info(f'drive_to_object gestartet - Modus: {mode}, '
-                               f'Ziel-Klasse: {self.tgt_class or "beliebig"}')
+        mode = 'DRY-RUN (does NOT drive)' if self.dry_run else 'ACTIVE (driving!)'
+        self.get_logger().info(f'drive_to_object started - mode: {mode}, '
+                               f'target class: {self.tgt_class or "any"}')
 
     def on_detections(self, msg):
         best = None
@@ -80,20 +80,20 @@ class DriveToObject(Node):
         target = self.last_target
 
         if target is None or age > self.timeout:
-            self.publish(twist, 'kein aktuelles Ziel -> Stopp')
+            self.publish(twist, 'no current target -> stop')
             return
 
         x, z, label, score = target
-        heading = math.atan2(x, z)      # >0 = Ziel rechts
+        heading = math.atan2(x, z)      # >0 = target is to the right
         err_z = z - self.stop_d
 
-        # Drehung (Ziel rechts -> rechts drehen -> angular.z negativ)
+        # Rotation: target on the right -> turn right -> negative angular.z.
         ang = -self.k_ang * heading
         if abs(heading) < self.ang_db:
             ang = 0.0
         ang = max(-self.max_ang, min(self.max_ang, ang))
 
-        # Vorwaerts nur wenn grob ausgerichtet und noch zu weit weg
+        # Drive forward only when roughly aligned and still too far away.
         lin = 0.0
         if abs(heading) < self.align_th and err_z > self.dist_tol:
             lin = max(0.0, min(self.max_lin, self.k_lin * err_z))
@@ -112,7 +112,7 @@ class DriveToObject(Node):
             self.get_logger().info(reason)
 
     def stop(self):
-        # Im Dry-Run garantiert nichts auf cmd_vel publizieren.
+        # In dry-run mode, never publish anything on cmd_vel.
         if self.dry_run:
             return
         try:
@@ -132,7 +132,7 @@ def parse_cli_args(argv):
             break
         if arg in ('--target', '--target-class'):
             if i + 1 >= len(argv):
-                raise SystemExit(f'{arg} braucht einen Klassen-Namen, z.B. {arg} person')
+                raise SystemExit(f'{arg} requires a class name, e.g. {arg} person')
             target_class = argv[i + 1]
             i += 2
             continue
