@@ -29,6 +29,19 @@ The deployment path used on the robot is:
 - Camera detections: `/oak/nn/spatial_detections` (`vision_msgs/Detection3DArray`)
 - Robot velocity command: `/cmd_vel` (`geometry_msgs/Twist`)
 
+## Repository Contents
+
+```text
+create3_oak/nodes/oak_publisher.py       # OAK-D-Lite -> /oak/nn/spatial_detections
+create3_oak/nodes/drive_to_object.py     # detections -> /cmd_vel
+config/cyclonedds.xml                    # Cyclone DDS network configuration
+config/netplan/99-usb0.yaml              # static usb0 address for Create 3 USB networking
+config/boot/config.txt.append            # Raspberry Pi USB gadget overlay
+config/boot/cmdline-token.txt            # Raspberry Pi dwc2/g_ether boot token
+scripts/install_pi_config.sh             # idempotent Pi configuration installer
+scripts/install_nodes.sh                 # node and camera venv installer
+```
+
 ## Setup On The Pi
 
 Install ROS 2 Jazzy and make sure the shell can source it:
@@ -38,7 +51,45 @@ source /opt/ros/jazzy/setup.bash
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ```
 
-Create the camera virtual environment with the standard Python tooling:
+Install the ROS packages used by these scripts:
+
+```bash
+sudo apt update
+sudo apt install ros-jazzy-ros-base ros-jazzy-rmw-cyclonedds-cpp ros-jazzy-vision-msgs ros-jazzy-irobot-create-msgs
+```
+
+Copy this repository to the Pi, then install the Pi-side USB and DDS configuration:
+
+```bash
+scripts/install_pi_config.sh
+sudo reboot
+```
+
+The installer is idempotent and performs these setup steps:
+
+- backs up `/boot/firmware/config.txt` and `/boot/firmware/cmdline.txt` if backups do not exist yet
+- adds `dtoverlay=dwc2,dr_mode=peripheral` to `/boot/firmware/config.txt`
+- adds `modules-load=dwc2,g_ether` after `rootwait` in `/boot/firmware/cmdline.txt`
+- installs `/etc/netplan/99-usb0.yaml` with `192.168.186.3/24`
+- installs `~/cyclonedds.xml`
+- adds `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` and `CYCLONEDDS_URI=file://$HOME/cyclonedds.xml` to `~/.bashrc`
+
+After reboot, verify the USB link to the robot:
+
+```bash
+ip addr show usb0
+ping -c 3 192.168.186.2
+```
+
+Install the runtime nodes and the camera virtual environment:
+
+```bash
+scripts/install_nodes.sh
+```
+
+The node installer copies the scripts to `~/create3_oak/nodes` and creates `~/create3_oak/venv`. It uses `uv` automatically when available, otherwise it falls back to the standard `venv` and `pip` tooling.
+
+Manual setup without `uv`:
 
 ```bash
 python3 -m venv --system-site-packages ~/create3_oak/venv
@@ -55,14 +106,6 @@ uv pip install -r pyproject.toml
 ```
 
 `--system-site-packages` is required because ROS Python packages such as `rclpy`, `vision_msgs`, and `geometry_msgs` are provided by the ROS installation, not by PyPI.
-
-Copy the node files to the Pi:
-
-```bash
-mkdir -p ~/create3_oak/nodes
-cp create3_oak/nodes/*.py ~/create3_oak/nodes/
-chmod +x ~/create3_oak/nodes/*.py
-```
 
 ## Run
 
