@@ -38,13 +38,23 @@ source /opt/ros/jazzy/setup.bash
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ```
 
-Create the camera virtual environment:
+Create the camera virtual environment with the standard Python tooling:
 
 ```bash
 python3 -m venv --system-site-packages ~/create3_oak/venv
 source ~/create3_oak/venv/bin/activate
 python3 -m pip install "depthai==3.7.1"
 ```
+
+Optional setup with `uv`:
+
+```bash
+uv venv --system-site-packages ~/create3_oak/venv
+source ~/create3_oak/venv/bin/activate
+uv pip install -r pyproject.toml
+```
+
+`--system-site-packages` is required because ROS Python packages such as `rclpy`, `vision_msgs`, and `geometry_msgs` are provided by the ROS installation, not by PyPI.
 
 Copy the node files to the Pi:
 

@@ -3,5 +3,7 @@ name = "oakdlite-create3"
 version = "0.1.0"
 description = "ROS 2 nodes for OAK-D-Lite object following with iRobot Create 3"
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = []
+requires-python = ">=3.12"
+dependencies = [
+    "depthai==3.7.1",
+]
