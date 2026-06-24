@@ -118,6 +118,20 @@ source ~/create3_oak/venv/bin/activate
 python3 ~/create3_oak/nodes/oak_publisher.py
 ```
 
+The camera model defaults to `yolov6-nano`. To try another DepthAI model zoo detection model, pass `--model`:
+
+```bash
+python3 ~/create3_oak/nodes/oak_publisher.py --model yolov8-nano
+```
+
+The same value can also be set as a ROS parameter:
+
+```bash
+python3 ~/create3_oak/nodes/oak_publisher.py --ros-args -p model:=yolov8-nano
+```
+
+Use object-detection models for this pipeline. Segmentation, pose, or classification-only models may require code changes because their output format differs from spatial detections.
+
 Terminal B, dry-run object following. This does not publish to `/cmd_vel`:
 
 ```bash

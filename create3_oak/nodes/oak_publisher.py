@@ -1,3 +1,4 @@
+import argparse
 import sys
 
 import rclpy
@@ -8,6 +9,7 @@ import depthai as dai
 FPS = 15                 # Bildrate von Kamera und Netz
 SIZE = (640, 400)        # Auflösung der Mono-/Tiefenbilder (Breite, Hoehe)
 FRAME_ID = "oak_camera"  # ROS-Frame, in dem die Positionen angegeben werden
+DEFAULT_MODEL = "yolov6-nano"
 
 
 def camera_is_available(logger):
@@ -31,16 +33,34 @@ def camera_is_available(logger):
     return True
 
 
+def parse_cli_args(argv):
+    """Liest eigene Argumente aus und reicht ROS-Argumente unveraendert weiter."""
+    parser = argparse.ArgumentParser(
+        description="Publiziert OAK-D-Lite-Detektionen als ROS-2-Topic."
+    )
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"DepthAI-Model-Zoo-Name, z. B. yolov6-nano oder yolov8-nano. Default: {DEFAULT_MODEL}",
+    )
+    args, ros_args = parser.parse_known_args(argv)
+    return args, ros_args
+
+
 def main():
-    rclpy.init()
+    args, ros_args = parse_cli_args(sys.argv[1:])
+    rclpy.init(args=ros_args)
     node = Node("oak_spatial_publisher")
     pub = node.create_publisher(Detection3DArray, "/oak/nn/spatial_detections", 10)
+    node.declare_parameter("model", args.model)
+    model_name = node.get_parameter("model").value
 
     try:
         if not camera_is_available(node.get_logger()): #als erstes wird geprüft ob die kamera vorhanden ist
             return 1
 
-        model = dai.NNModelDescription("yolov6-nano") #objekt erkennungsmodell laden aus depthai
+        node.get_logger().info(f"Verwende DepthAI-Modell: {model_name}")
+        model = dai.NNModelDescription(model_name) #objekt erkennungsmodell laden aus depthai
 
         with dai.Pipeline() as p: # pipeline
             camRgb = p.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A, sensorFps=FPS) #farbbild für das objekterkennungsmodell
