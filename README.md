@@ -118,19 +118,23 @@ source ~/create3_oak/venv/bin/activate
 python3 ~/create3_oak/nodes/oak_publisher.py
 ```
 
-The camera model defaults to `yolov6-nano`. To try another DepthAI model zoo detection model, pass `--model`:
+The camera model defaults to `yolov6-nano`. This is the tested model for this project.
+
+To try another DepthAI Hub / Model Zoo detection model, pass its exact public slug with `--model`:
 
 ```bash
-python3 ~/create3_oak/nodes/oak_publisher.py --model yolov8-nano
+python3 ~/create3_oak/nodes/oak_publisher.py --model <model-slug>
 ```
 
 The same value can also be set as a ROS parameter:
 
 ```bash
-python3 ~/create3_oak/nodes/oak_publisher.py --ros-args -p model:=yolov8-nano
+python3 ~/create3_oak/nodes/oak_publisher.py --ros-args -p model:=<model-slug>
 ```
 
-Use object-detection models for this pipeline. Segmentation, pose, or classification-only models may require code changes because their output format differs from spatial detections.
+Use object-detection models for this pipeline. Segmentation, pose, or classification-only models require code changes because their output format differs from spatial detections.
+
+The complete searchable model list with exact slugs is available at <https://models.luxonis.com>. Filter for "Object Detection" and copy the exact slug from the model card. Long-form slugs with a variant are also supported, for example `luxonis/yolov6-nano:r2-coco-512x288`.
 
 Terminal B, dry-run object following. This does not publish to `/cmd_vel`:
 

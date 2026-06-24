@@ -47,6 +47,19 @@ def parse_cli_args(argv):
     return args, ros_args
 
 
+def build_spatial_network(pipeline, cam_rgb, stereo, model_name, logger):
+    """Laedt das gewaehlte Detection-Modell und baut die Spatial-Detection-Pipeline."""
+    try:
+        model = dai.NNModelDescription(model_name) #objekt erkennungsmodell laden aus depthai
+        return pipeline.create(dai.node.SpatialDetectionNetwork).build(cam_rgb, stereo, model)
+    except RuntimeError as exc:
+        logger.error(f"DepthAI-Modell konnte nicht geladen werden: {model_name}")
+        logger.error("Der Name muss ein gueltiger oeffentlicher DepthAI-Hub/Model-Zoo-Slug sein.")
+        logger.error(f"Getesteter Standardwert: {DEFAULT_MODEL}")
+        logger.error(f"Originalfehler: {exc}")
+        return None
+
+
 def main():
     args, ros_args = parse_cli_args(sys.argv[1:])
     rclpy.init(args=ros_args)
@@ -60,7 +73,6 @@ def main():
             return 1
 
         node.get_logger().info(f"Verwende DepthAI-Modell: {model_name}")
-        model = dai.NNModelDescription(model_name) #objekt erkennungsmodell laden aus depthai
 
         with dai.Pipeline() as p: # pipeline
             camRgb = p.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A, sensorFps=FPS) #farbbild für das objekterkennungsmodell
@@ -73,7 +85,9 @@ def main():
             monoLeft.requestOutput(SIZE).link(stereo.left)
             monoRight.requestOutput(SIZE).link(stereo.right)
 
-            spatial = p.create(dai.node.SpatialDetectionNetwork).build(camRgb, stereo, model) #objekterkennung und tiefe werden kombiniert
+            spatial = build_spatial_network(p, camRgb, stereo, model_name, node.get_logger()) #objekterkennung und tiefe werden kombiniert
+            if spatial is None:
+                return 2
             spatial.input.setBlocking(False)
             spatial.setDepthLowerThreshold(100)   # in mm - näher wird ignoriert
             spatial.setDepthUpperThreshold(5000)  # in mm - weiter wird ignoriert
