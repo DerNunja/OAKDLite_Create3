@@ -13,9 +13,9 @@ DEFAULT_MODEL = "yolov6-nano"
 
 
 def camera_is_available(logger):
-    """Prueft vor dem Pipeline-Start, ob eine OAK-/DepthAI-Kamera erreichbar ist.
+    """Prüft vor dem Pipeline-Start, ob eine OAK-/DepthAI-Kamera erreichbar ist.
 
-    Gibt True zurueck, wenn mindestens ein Geraet gefunden wird. So bricht der
+    Gibt True zurueck, wenn mindestens ein Gerät gefunden wird. So bricht der
     Node mit klarer Meldung ab, statt in eine Reconnect-Schleife zu laufen, falls
     die Kamera (z. B. nach einem vorherigen Lauf) nicht sauber bereitsteht.
     """
@@ -34,7 +34,7 @@ def camera_is_available(logger):
 
 
 def parse_cli_args(argv):
-    """Liest eigene Argumente aus und reicht ROS-Argumente unveraendert weiter."""
+    """Liest eigene Argumente aus und reicht ROS-Argumente unverändert weiter."""
     parser = argparse.ArgumentParser(
         description="Publiziert OAK-D-Lite-Detektionen als ROS-2-Topic."
     )
@@ -48,13 +48,13 @@ def parse_cli_args(argv):
 
 
 def build_spatial_network(pipeline, cam_rgb, stereo, model_name, logger):
-    """Laedt das gewaehlte Detection-Modell und baut die Spatial-Detection-Pipeline."""
+    """Lädt das gewählte Detection-Modell und baut die Spatial-Detection-Pipeline."""
     try:
         model = dai.NNModelDescription(model_name) #objekt erkennungsmodell laden aus depthai
         return pipeline.create(dai.node.SpatialDetectionNetwork).build(cam_rgb, stereo, model)
     except RuntimeError as exc:
         logger.error(f"DepthAI-Modell konnte nicht geladen werden: {model_name}")
-        logger.error("Der Name muss ein gueltiger oeffentlicher DepthAI-Hub/Model-Zoo-Slug sein.")
+        logger.error("Der Name muss ein gültiger öffentlicher DepthAI-Hub/Model-Zoo-Slug sein.")
         logger.error(f"Getesteter Standardwert: {DEFAULT_MODEL}")
         logger.error(f"Originalfehler: {exc}")
         return None
@@ -122,7 +122,7 @@ def main():
                 if msg.detections:
                     node.get_logger().info(f"{len(msg.detections)} Objekt(e) publiziert")
 
-    except KeyboardInterrupt:
+    except KeyboardInterrupt:   #intereupt zum sauberen schließen der nodes
         pass
     finally:
         node.destroy_node()

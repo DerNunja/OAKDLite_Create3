@@ -17,23 +17,23 @@ class DriveToObject(Node):
         # z. B.:  --ros-args -p stop_distance:=0.7 -p k_ang:=0.9
         self.declare_parameter('dry_run', True)            # True = nicht fahren, nur loggen
         self.declare_parameter('target_class', '')         # '' = beliebiges Objekt, sonst z. B. 'person'
-        self.declare_parameter('min_confidence', 0.4)      # Detektionen darunter ignorieren
-        self.declare_parameter('stop_distance', 0.5)       # m  - gewuenschter Abstand vor dem Objekt
-        self.declare_parameter('distance_tolerance', 0.05) # m  - Totbereich um den Zielabstand
-        self.declare_parameter('max_linear', 0.15)         # m/s - maximale Vorwaertsgeschwindigkeit
+        self.declare_parameter('min_confidence', 0.3)      # Detektionen darunter ignorieren
+        self.declare_parameter('stop_distance', 0.5)       # m - gewünschter Abstand vor dem Objekt
+        self.declare_parameter('distance_tolerance', 0.05) # m - Totbereich um den Zielabstand
+        self.declare_parameter('max_linear', 0.15)         # m/s - maximale Vorwärtsgeschwindigkeit
         self.declare_parameter('max_angular', 0.6)         # rad/s - maximale Drehgeschwindigkeit
-        self.declare_parameter('k_lin', 0.4)               # Verstaerkung Vorwaerts (P-Regler)
-        self.declare_parameter('k_ang', 1.2)               # Verstaerkung Drehung  (P-Regler)
+        self.declare_parameter('k_lin', 0.4)               # Verstärkung Vorwärts (P-Regler)
+        self.declare_parameter('k_ang', 1.2)               # Verstärkung Drehung  (P-Regler)
         self.declare_parameter('align_threshold', 0.35)    # rad (~20 deg) - erst ausrichten, dann fahren
         self.declare_parameter('angular_deadband', 0.05)   # rad - darunter keine Drehung (gegen Zittern)
-        self.declare_parameter('detection_timeout', 0.5)   # s  - ohne Detektion -> Stopp
+        self.declare_parameter('detection_timeout', 0.5)   # s - ohne Detektion -> Stopp
         self.declare_parameter('control_rate', 15.0)       # Hz - Takt der Regelschleife
 
         # Parameterwerte einlesen
         gp = self.get_parameter
         self.dry_run = gp('dry_run').value
         self.tgt_class = gp('target_class').value
-        # Eine ueber die Kommandozeile angegebene Zielklasse hat Vorrang.
+        # Eine über die Kommandozeile angegebene Zielklasse hat Vorrang.
         if target_class_override is not None:
             self.tgt_class = target_class_override
         self.min_conf = gp('min_confidence').value
@@ -90,7 +90,7 @@ class DriveToObject(Node):
         self.last_time = self.get_clock().now()
 
     def _compute_velocity(self, x, z):
-        """Kern der Regelung: berechnet aus der Objektposition (x, z) die
+        """berechnet aus der Objektposition (x, z) die
         Fahrbefehle (lineare Geschwindigkeit lin, Drehgeschwindigkeit ang).
 
           heading = atan2(x, z)   Winkel zum Objekt; > 0 bedeutet "Objekt rechts".
@@ -102,7 +102,7 @@ class DriveToObject(Node):
             Innerhalb eines kleinen Totbereichs (angular_deadband) wird nicht
             gedreht, danach auf max_angular begrenzt.
 
-          Vorwaerts:
+          Vorwärts:
             lin = k_lin * (z - stop_distance)
             Nur, wenn der Roboter grob zum Objekt ausgerichtet ist
             (|heading| < align_threshold) und noch weiter weg als der Zielabstand.
@@ -127,7 +127,7 @@ class DriveToObject(Node):
     def control_loop(self):
         """Regelschleife (läuft mit control_rate).
 
-        Watchdog: Ist kein Ziel vorhanden oder die letzte Detektion älter als
+        Ist kein Ziel vorhanden oder die letzte Detektion älter als
         detection_timeout, wird ein Stopp gesendet. So hält der Roboter an,
         wenn das Objekt verschwindet oder der Kamera-Node ausfällt.
         """
@@ -177,8 +177,8 @@ def parse_cli_args(argv):
       drive_to_object.py --target person
       drive_to_object.py --target-class person
       drive_to_object.py --target=person
-    Alles ab '--ros-args' wird unveraendert an rclpy weitergereicht (z. B. -p dry_run:=false).
-    Rueckgabe: (zielklasse_oder_None, ros_argumente_liste).
+    Alles ab '--ros-args' wird unverändert an rclpy weitergereicht (z. B. -p dry_run:=false).
+    Rückgabe: (zielklasse_oder_None, ros_argumente_liste).
     """
     target_class = None
     ros_args = []
