@@ -1,5 +1,6 @@
 import math
 import sys
+from collections import namedtuple
 
 import rclpy
 from rclpy.node import Node
@@ -7,122 +8,132 @@ from rclpy.executors import ExternalShutdownException
 from vision_msgs.msg import Detection3DArray
 from geometry_msgs.msg import Twist
 
+# Verwendung eines namedTupels zum einfacheren arbeiten im Code
+Target = namedtuple("Target", ["x", "z", "label", "score"])
+# x, z  : Position relativ zur Kamera in Metern (x = seitlich, z = nach vorne)
+# label : Klassenname, z. B. "person"
+# score : Konfidenz 0..1
+
 
 class DriveToObject(Node):
     def __init__(self, target_class_override=None):
-        super().__init__('drive_to_object')
+        super().__init__("drive_to_object")
 
-        # --- Parameter (mit sicheren Defaults) -------------------------------
+        # Parameter mit getesteten Defaults 
         # Alle Werte sind beim Start über ROS-Parameter überschreibbar,
         # z. B.:  --ros-args -p stop_distance:=0.7 -p k_ang:=0.9
-        self.declare_parameter('dry_run', True)            # True = nicht fahren, nur loggen
-        self.declare_parameter('target_class', '')         # '' = beliebiges Objekt, sonst z. B. 'person'
-        self.declare_parameter('min_confidence', 0.3)      # Detektionen darunter ignorieren
-        self.declare_parameter('stop_distance', 0.5)       # m - gewünschter Abstand vor dem Objekt
-        self.declare_parameter('distance_tolerance', 0.05) # m - Totbereich um den Zielabstand
-        self.declare_parameter('max_linear', 0.15)         # m/s - maximale Vorwärtsgeschwindigkeit
-        self.declare_parameter('max_angular', 0.6)         # rad/s - maximale Drehgeschwindigkeit
-        self.declare_parameter('k_lin', 0.4)               # Verstärkung Vorwärts (P-Regler)
-        self.declare_parameter('k_ang', 1.2)               # Verstärkung Drehung  (P-Regler)
-        self.declare_parameter('align_threshold', 0.35)    # rad (~20 deg) - erst ausrichten, dann fahren
-        self.declare_parameter('angular_deadband', 0.05)   # rad - darunter keine Drehung (gegen Zittern)
-        self.declare_parameter('detection_timeout', 0.5)   # s - ohne Detektion -> Stopp
-        self.declare_parameter('control_rate', 15.0)       # Hz - Takt der Regelschleife
+        self.declare_parameter("dry_run", True) # True = nicht fahren, nur loggen; wurde zum testen verwendet damit der Roboter nicht unkontrolliert los fährt
+        self.declare_parameter("target_class", "")  # "" = beliebiges Objekt, sonst z. B. "person"
+        self.declare_parameter("min_confidence", 0.3)   # Detektionen darunter ignorieren
+        self.declare_parameter("stop_distance", 0.5)    # m - Zielabstand vor dem Objekt
+        self.declare_parameter("distance_tolerance", 0.05)  # m - Totbereich um den Zielabstand
+        self.declare_parameter("max_linear", 0.15)  # m/s - maximale Vorwärtsgeschwindigkeit
+        self.declare_parameter("max_angular", 0.6)  # rad/s - maximale Drehgeschwindigkeit
+        self.declare_parameter("k_lin", 0.4)    # Reglerverstärkung vorwärts (k_lin in der Formel)
+        self.declare_parameter("k_ang", 1.2)    # Reglerverstärkung Drehung   (k_ang in der Formel)
+        self.declare_parameter("align_threshold", 0.35) # rad (~20 Grad) - erst ausrichten, dann fahren
+        self.declare_parameter("angular_deadband", 0.05)    # rad - darunter keine Drehung (gegen Zittern)
+        self.declare_parameter("detection_timeout", 0.5)    # s - ohne Detektion -> Stopp
+        self.declare_parameter("control_rate", 15.0)    # Hz - Takt der Regelschleife
 
-        # Parameterwerte einlesen
-        gp = self.get_parameter
-        self.dry_run = gp('dry_run').value
-        self.tgt_class = gp('target_class').value
+        # Kleine Hilfsfunktion, damit das Einlesen der Parameter gut lesbar bleibt.
+        def param(name):
+            return self.get_parameter(name).value
+
+        self.dry_run = param("dry_run")
+        self.target_class = param("target_class")
         # Eine über die Kommandozeile angegebene Zielklasse hat Vorrang.
         if target_class_override is not None:
-            self.tgt_class = target_class_override
-        self.min_conf = gp('min_confidence').value
-        self.stop_d = gp('stop_distance').value
-        self.dist_tol = gp('distance_tolerance').value
-        self.max_lin = gp('max_linear').value
-        self.max_ang = gp('max_angular').value
-        self.k_lin = gp('k_lin').value
-        self.k_ang = gp('k_ang').value
-        self.align_th = gp('align_threshold').value
-        self.ang_db = gp('angular_deadband').value
-        self.timeout = gp('detection_timeout').value
-        rate = gp('control_rate').value
+            self.target_class = target_class_override
+        self.min_confidence = param("min_confidence")
+        self.stop_distance = param("stop_distance")
+        self.distance_tolerance = param("distance_tolerance")
+        self.max_linear = param("max_linear")
+        self.max_angular = param("max_angular")
+        self.k_lin = param("k_lin")
+        self.k_ang = param("k_ang")
+        self.align_threshold = param("align_threshold")
+        self.angular_deadband = param("angular_deadband")
+        self.detection_timeout = param("detection_timeout")
+        control_rate = param("control_rate")
 
-        # zuletzt gesehenes objekt: (x, z, label, score) und empfangszeitpunkt.
+        # Zuletzt erkanntes Zielobjekt und Zeitpunkt der letzten Detektion
+        # (für die Stopp-bei-Zielverlust-Logik).
         self.last_target = None
-        self.last_time = self.get_clock().now()
+        self.last_detection_time = self.get_clock().now()
 
-        # ROS-Schnittstellen: detektionen abonnieren, fahrbefehle publizieren.
-        self.sub = self.create_subscription(
-            Detection3DArray, '/oak/nn/spatial_detections', self.on_detections, 10)
-        self.pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        # regelschleife läuft zeitgesteuert (nicht nur bei Empfang), damit
-        # kontinuierlich /cmd_vel kommt und der Stopp bei Zielverlust sicher greift
-        self.timer = self.create_timer(1.0 / rate, self.control_loop)
+        # ROS-Schnittstellen: Detektionen abonnieren, Fahrbefehle publizieren.
+        self.subscription = self.create_subscription(
+            Detection3DArray, "/oak/nn/spatial_detections", self.on_detections, 10)
+        self.cmd_vel_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
 
-        mode = 'DRY-RUN (fährt NICHT)' if self.dry_run else 'AKTIV (fährt!)'
-        self.get_logger().info(f'drive_to_object gestartet - Modus: {mode}, '
-                               f'Zielklasse: {self.tgt_class or "beliebig"}')
+        # Die Regelschleife läuft zeitgesteuert (nicht nur bei Empfang), damit
+        # kontinuierlich /cmd_vel kommt und der Stopp bei Zielverlust sicher greift.
+        self.timer = self.create_timer(1.0 / control_rate, self.control_loop)
 
-    def on_detections(self, msg):
+        mode = "DRY-RUN (fährt NICHT)" if self.dry_run else "AKTIV (fährt!)"
+        self.get_logger().info(f"drive_to_object gestartet - Modus: {mode}, "
+                               f"Zielklasse: {self.target_class or 'beliebig'}")
+
+    def on_detections(self, message):
         """Callback für /oak/nn/spatial_detections.
 
-        Wählt aus allen Detektionen das nächstgelegene gültige Zielobjekt aus:
+        Wählt aus allen Detektionen das nächstgelegene gültige Zielobjekt:
         ausreichende Konfidenz, passende Zielklasse (falls gesetzt) und gültige
         Tiefe (z > 0). Gespeichert wird der beste Treffer mit Zeitstempel.
         """
-        best = None
-        for det in msg.detections:
-            if not det.results:
+        nearest = None
+        for detection in message.detections:
+            if not detection.results:
                 continue
-            hyp = det.results[0].hypothesis
-            if hyp.score < self.min_conf:                       # zu unsicher
+            hypothesis = detection.results[0].hypothesis
+            if hypothesis.score < self.min_confidence:                 # zu unsicher
                 continue
-            if self.tgt_class and hyp.class_id != self.tgt_class:  # falsche Klasse
+            if self.target_class and hypothesis.class_id != self.target_class:  # falsche Klasse
                 continue
-            p = det.results[0].pose.pose.position
-            if p.z <= 0.0:                                      # keine gueltige Tiefe
+            position = detection.results[0].pose.pose.position
+            if position.z <= 0.0:                                      # keine gültige Tiefe
                 continue
-            # "Naechstes" Objekt = kleinster Z-Wert.
-            if best is None or p.z < best[1]:
-                best = (p.x, p.z, hyp.class_id, hyp.score)
-        self.last_target = best
-        self.last_time = self.get_clock().now()
+            # "Nächstes" Objekt = kleinster Z-Wert (Entfernung nach vorne).
+            if nearest is None or position.z < nearest.z:
+                nearest = Target(x=position.x, z=position.z, label=hypothesis.class_id, score=hypothesis.score)
+
+        self.last_target = nearest
+        self.last_detection_time = self.get_clock().now()
 
     def _compute_velocity(self, x, z):
-        """berechnet aus der Objektposition (x, z) die
-        Fahrbefehle (lineare Geschwindigkeit lin, Drehgeschwindigkeit ang).
+        """Kern der Regelung: berechnet aus der Objektposition (x, z) die
+        Fahrbefehle (lineare Geschwindigkeit, Drehgeschwindigkeit).
 
           heading = atan2(x, z)   Winkel zum Objekt; > 0 bedeutet "Objekt rechts".
 
           Drehung:
-            ang = -k_ang * heading
-            Vorzeichen: Objekt rechts (heading > 0) -> ang < 0 -> Rechtsdrehung
-            (ROS-Konvention: positives angular.z = Drehung nach links).
+            angular = -k_ang * heading
+            Vorzeichen: Objekt rechts (heading > 0) -> angular < 0 -> Rechtsdrehung
             Innerhalb eines kleinen Totbereichs (angular_deadband) wird nicht
-            gedreht, danach auf max_angular begrenzt.
+            gedreht; danach auf max_angular begrenzt.
 
           Vorwärts:
-            lin = k_lin * (z - stop_distance)
+            linear = k_lin * (z - stop_distance)
             Nur, wenn der Roboter grob zum Objekt ausgerichtet ist
             (|heading| < align_threshold) und noch weiter weg als der Zielabstand.
-            Auf [0, max_linear] begrenzt (kein Rueckwaerts).
+            Auf [0, max_linear] begrenzt (kein Rückwärts).
         """
         heading = math.atan2(x, z)
-        err_z = z - self.stop_d
+        distance_error = z - self.stop_distance
 
         # Drehgeschwindigkeit
-        ang = -self.k_ang * heading
-        if abs(heading) < self.ang_db:
-            ang = 0.0
-        ang = max(-self.max_ang, min(self.max_ang, ang))
+        angular_velocity = -self.k_ang * heading
+        if abs(heading) < self.angular_deadband:
+            angular_velocity = 0.0
+        angular_velocity = max(-self.max_angular, min(self.max_angular, angular_velocity))
 
         # Vorwärtsgeschwindigkeit (erst ausrichten, dann fahren)
-        lin = 0.0
-        if abs(heading) < self.align_th and err_z > self.dist_tol:
-            lin = max(0.0, min(self.max_lin, self.k_lin * err_z))
+        linear_velocity = 0.0
+        if abs(heading) < self.align_threshold and distance_error > self.distance_tolerance:
+            linear_velocity = max(0.0, min(self.max_linear, self.k_lin * distance_error))
 
-        return lin, ang
+        return linear_velocity, angular_velocity
 
     def control_loop(self):
         """Regelschleife (läuft mit control_rate).
@@ -132,27 +143,28 @@ class DriveToObject(Node):
         wenn das Objekt verschwindet oder der Kamera-Node ausfällt.
         """
         twist = Twist()
-        age = (self.get_clock().now() - self.last_time).nanoseconds * 1e-9
+        seconds_since_detection = (
+            self.get_clock().now() - self.last_detection_time).nanoseconds * 1e-9
         target = self.last_target
 
-        if target is None or age > self.timeout:
-            self.publish(twist, 'kein aktuelles Ziel -> Stopp')
+        if target is None or seconds_since_detection > self.detection_timeout:
+            self.publish(twist, "kein aktuelles Ziel -> Stopp")
             return
 
-        x, z, label, score = target
-        lin, ang = self._compute_velocity(x, z)
-        twist.linear.x = float(lin)
-        twist.angular.z = float(ang)
+        linear_velocity, angular_velocity = self._compute_velocity(target.x, target.z)
+        twist.linear.x = float(linear_velocity)
+        twist.angular.z = float(angular_velocity)
         self.publish(twist,
-                     f'{label} {score * 100:.0f}%  x={x:+.2f} z={z:.2f}  '
-                     f'-> v={lin:.2f} w={ang:+.2f}')
+                     f"{target.label} {target.score * 100:.0f}%  "
+                     f"x={target.x:+.2f} z={target.z:.2f}  "
+                     f"-> v={linear_velocity:.2f} w={angular_velocity:+.2f}")
 
     def publish(self, twist, reason):
         """Sendet den Fahrbefehl - oder loggt ihn im Dry-Run nur, ohne zu senden."""
         if self.dry_run:
-            self.get_logger().info(f'[DRY] {reason}')
+            self.get_logger().info(f"[DRY] {reason}")
         else:
-            self.pub.publish(twist)
+            self.cmd_vel_publisher.publish(twist)
             self.get_logger().info(reason)
 
     def stop(self):
@@ -164,7 +176,7 @@ class DriveToObject(Node):
         if self.dry_run:
             return
         try:
-            self.pub.publish(Twist())
+            self.cmd_vel_publisher.publish(Twist())
         except Exception:
             pass
 
@@ -172,45 +184,46 @@ class DriveToObject(Node):
 def parse_cli_args(argv):
     """Trennt eine optionale Zielklasse von den ROS-Argumenten.
 
-    Erlaubt mehrere bequeme Schreibweisen fuer die Zielklasse:
+    Erlaubt mehrere bequeme Schreibweisen für die Zielklasse:
       drive_to_object.py person
       drive_to_object.py --target person
       drive_to_object.py --target-class person
       drive_to_object.py --target=person
-    Alles ab '--ros-args' wird unverändert an rclpy weitergereicht (z. B. -p dry_run:=false).
-    Rückgabe: (zielklasse_oder_None, ros_argumente_liste).
+    Alles ab "--ros-args" wird unverändert an rclpy weitergereicht
+    (z. B. -p dry_run:=false). Rückgabe: (zielklasse_oder_None, ros_argumente).
     """
     target_class = None
     ros_args = []
     i = 0
     while i < len(argv):
         arg = argv[i]
-        if arg == '--ros-args':
+        if arg == "--ros-args":
+            # Ab hier gehört alles ROS; unverändert weiterreichen.
             ros_args.extend(argv[i:])
             break
-        if arg in ('--target', '--target-class'):
+        if arg in ("--target", "--target-class"):
             if i + 1 >= len(argv):
-                raise SystemExit(f'{arg} benoetigt einen Klassennamen, z. B. {arg} person')
+                raise SystemExit(f"{arg} benoetigt einen Klassennamen, z. B. {arg} person")
             target_class = argv[i + 1]
             i += 2
             continue
-        if arg.startswith('--target='):
-            target_class = arg.split('=', 1)[1]
+        if arg.startswith("--target="):
+            target_class = arg.split("=", 1)[1]
             i += 1
             continue
-        if arg.startswith('--target-class='):
-            target_class = arg.split('=', 1)[1]
+        if arg.startswith("--target-class="):
+            target_class = arg.split("=", 1)[1]
             i += 1
             continue
-        # Erstes "freies" Argument (ohne '-') wird als Zielklasse interpretiert.
-        if not arg.startswith('-') and target_class is None:
+        # Erstes "freies" Argument (ohne fuehrendes '-') ist die Zielklasse.
+        if not arg.startswith("-") and target_class is None:
             target_class = arg
             i += 1
             continue
         ros_args.append(arg)
         i += 1
 
-    if target_class == '':
+    if target_class == "":
         target_class = None
     return target_class, ros_args
 
@@ -231,5 +244,5 @@ def main():
             rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
